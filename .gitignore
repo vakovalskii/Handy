@@ -37,3 +37,4 @@ blob-report/
 
 .direnv
 .envrc
+src-tauri/build_log.txt
