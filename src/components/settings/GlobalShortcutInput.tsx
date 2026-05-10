@@ -110,6 +110,14 @@ export const GlobalShortcutInput: React.FC<GlobalShortcutInputProps> = ({
           "super",
           "win",
           "windows",
+          "controlleft",
+          "controlright",
+          "altleft",
+          "altright",
+          "shiftleft",
+          "shiftright",
+          "metaleft",
+          "metaright",
         ];
         const sortedKeys = recordedKeys.sort((a, b) => {
           const aIsModifier = modifiers.includes(a.toLowerCase());
@@ -118,7 +126,17 @@ export const GlobalShortcutInput: React.FC<GlobalShortcutInputProps> = ({
           if (!aIsModifier && bIsModifier) return 1;
           return 0;
         });
-        const newShortcut = sortedKeys.join("+");
+        let newShortcut = sortedKeys.join("+");
+
+        // If it's a combination (more than 1 key), we must normalize left/right modifiers 
+        // to standard ones so Tauri can parse them properly (e.g. controlright+A -> ctrl+A)
+        if (sortedKeys.length > 1) {
+          newShortcut = newShortcut
+            .replace(/control(left|right)/g, osType === "macos" ? "ctrl" : "ctrl")
+            .replace(/alt(left|right)/g, osType === "macos" ? "option" : "alt")
+            .replace(/shift(left|right)/g, "shift")
+            .replace(/meta(left|right)/g, osType === "macos" ? "command" : "super");
+        }
 
         if (editingShortcutId && bindings[editingShortcutId]) {
           try {

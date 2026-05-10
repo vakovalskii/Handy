@@ -12,6 +12,8 @@
 mod handler;
 pub mod handy_keys;
 mod tauri_impl;
+#[cfg(target_os = "windows")]
+pub mod windows_native;
 
 use log::{error, info, warn};
 use serde::Serialize;
@@ -30,6 +32,9 @@ use crate::tray;
 
 /// Initialize shortcuts using the configured implementation
 pub fn init_shortcuts(app: &AppHandle) {
+    #[cfg(target_os = "windows")]
+    windows_native::hook::init(app.clone());
+
     let user_settings = settings::load_or_create_app_settings(app);
 
     // Check which implementation to use

@@ -99,7 +99,18 @@ function App() {
       const result = await commands.hasAnyModelsAvailable();
       const hasModels = result.status === "ok" && result.data;
 
-      if (hasModels) {
+      // Also check if remote whisper is enabled (e.g. Groq API)
+      let hasRemoteWhisper = false;
+      try {
+        const settingsResult = await commands.getAppSettings();
+        if (settingsResult.status === "ok") {
+          hasRemoteWhisper = settingsResult.data.remote_whisper_enabled === true;
+        }
+      } catch (e) {
+        console.warn("Failed to check remote whisper settings:", e);
+      }
+
+      if (hasModels || hasRemoteWhisper) {
         // Returning user - but check if they need to grant permissions on macOS
         setIsReturningUser(true);
         if (platform() === "macos") {

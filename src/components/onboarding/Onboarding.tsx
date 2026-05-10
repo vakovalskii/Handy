@@ -6,6 +6,7 @@ import type { ModelCardStatus } from "./ModelCard";
 import ModelCard from "./ModelCard";
 import HandyTextLogo from "../icons/HandyTextLogo";
 import { useModelStore } from "../../stores/modelStore";
+import { useSettingsStore } from "../../stores/settingsStore";
 
 interface OnboardingProps {
   onModelSelected: () => void;
@@ -22,6 +23,7 @@ const Onboarding: React.FC<OnboardingProps> = ({ onModelSelected }) => {
     downloadProgress,
     downloadStats,
   } = useModelStore();
+  const updateSetting = useSettingsStore((state) => state.updateSetting);
   const [selectedModelId, setSelectedModelId] = useState<string | null>(null);
 
   const isDownloading = selectedModelId !== null;
@@ -61,6 +63,16 @@ const Onboarding: React.FC<OnboardingProps> = ({ onModelSelected }) => {
     if (!success) {
       toast.error(t("onboarding.downloadFailed"));
       setSelectedModelId(null);
+    }
+  };
+
+  const handleSkipToRemote = async () => {
+    try {
+      await updateSetting("remote_whisper_enabled", true);
+      onModelSelected();
+    } catch (e) {
+      console.error("Failed to enable remote whisper:", e);
+      toast.error("Failed to enable Remote API");
     }
   };
 
@@ -125,6 +137,16 @@ const Onboarding: React.FC<OnboardingProps> = ({ onModelSelected }) => {
                 downloadSpeed={getModelDownloadSpeed(model.id)}
               />
             ))}
+        </div>
+
+        <div className="pt-2 pb-4 border-t border-mid-gray/20">
+          <button
+            onClick={handleSkipToRemote}
+            disabled={isDownloading}
+            className="text-sm text-text/50 hover:text-text/80 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            Или используйте Remote API (Groq, OpenAI) →
+          </button>
         </div>
       </div>
     </div>

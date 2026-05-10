@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { Input } from "../ui/Input";
 import { SettingContainer } from "../ui/SettingContainer";
 import { ToggleSwitch } from "../ui/ToggleSwitch";
+import { Select } from "../ui/Select";
 import { useSettings } from "../../hooks/useSettings";
 
 interface RemoteWhisperSettingsProps {
@@ -77,6 +78,33 @@ export const RemoteWhisperSettings: React.FC<RemoteWhisperSettingsProps> =
       }
     };
 
+    const determineProvider = (url: string) => {
+      if (url.includes("api.groq.com")) return "groq";
+      if (url.includes("api.openai.com")) return "openai";
+      return "custom";
+    };
+
+    const provider = determineProvider(baseUrl);
+
+    const providerOptions = [
+      { value: "custom", label: "Custom" },
+      { value: "openai", label: "OpenAI" },
+      { value: "groq", label: "Groq" },
+    ];
+
+    const handleProviderChange = (newProvider: string | null) => {
+      if (!newProvider) return;
+      if (newProvider === "groq") {
+        updateSetting("remote_whisper_base_url", "https://api.groq.com/openai/v1");
+        updateSetting("remote_whisper_model", "whisper-large-v3-turbo");
+      } else if (newProvider === "openai") {
+        updateSetting("remote_whisper_base_url", "https://api.openai.com/v1");
+        updateSetting("remote_whisper_model", "whisper-1");
+      }
+    };
+
+    const isPresetProvider = provider !== "custom";
+
     return (
       <div className={`${grouped ? "" : "rounded-lg border border-mid-gray/20"}`}>
         <ToggleSwitch
@@ -91,12 +119,27 @@ export const RemoteWhisperSettings: React.FC<RemoteWhisperSettingsProps> =
         />
         {enabled && (
           <div className="px-4 pb-2 space-y-2">
+            <SettingContainer
+              title="Provider"
+              description="Select the API provider for remote whisper."
+              descriptionMode="tooltip"
+              grouped
+              layout="stacked"
+            >
+              <Select
+                value={provider}
+                options={providerOptions}
+                onChange={handleProviderChange}
+                isClearable={false}
+              />
+            </SettingContainer>
+            
             <TextSettingField
               title={t("settings.advanced.remoteWhisper.baseUrl.title")}
               description={t("settings.advanced.remoteWhisper.baseUrl.description")}
               value={baseUrl}
               placeholder="https://whisper.example.com/v1"
-              disabled={isUpdating("remote_whisper_base_url")}
+              disabled={isUpdating("remote_whisper_base_url") || isPresetProvider}
               onCommit={(value) =>
                 updateIfChanged(
                   "remote_whisper_base_url",
