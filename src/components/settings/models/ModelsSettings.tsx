@@ -1,10 +1,11 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ask } from "@tauri-apps/plugin-dialog";
-import { ChevronDown, Globe } from "lucide-react";
+import { ChevronDown, Globe, Cloud } from "lucide-react";
 import type { ModelCardStatus } from "@/components/onboarding";
 import { ModelCard } from "@/components/onboarding";
 import { useModelStore } from "@/stores/modelStore";
+import { useSettings } from "@/hooks/useSettings";
 import { LANGUAGES } from "@/lib/constants/languages.ts";
 import type { ModelInfo } from "@/bindings";
 
@@ -15,6 +16,8 @@ const modelSupportsLanguage = (model: ModelInfo, langCode: string): boolean => {
 
 export const ModelsSettings: React.FC = () => {
   const { t } = useTranslation();
+  const { getSetting } = useSettings();
+  const remoteWhisperEnabled = getSetting("remote_whisper_enabled") ?? false;
   const [switchingModelId, setSwitchingModelId] = useState<string | null>(null);
   const [languageFilter, setLanguageFilter] = useState("all");
   const [languageDropdownOpen, setLanguageDropdownOpen] = useState(false);
@@ -211,6 +214,14 @@ export const ModelsSettings: React.FC = () => {
           {t("settings.models.description")}
         </p>
       </div>
+
+      {remoteWhisperEnabled && (
+        <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-green-400/10 border border-green-400/30 text-green-400 text-sm">
+          <Cloud className="w-4 h-4" />
+          <span>{t("settings.models.remoteEnabledNotice")}</span>
+        </div>
+      )}
+
       {filteredModels.length > 0 ? (
         <div className="space-y-6">
           {/* Downloaded Models Section — header always visible so filter stays accessible */}

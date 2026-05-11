@@ -5,6 +5,7 @@ import { SettingContainer } from "../ui/SettingContainer";
 import { ToggleSwitch } from "../ui/ToggleSwitch";
 import { Select } from "../ui/Select";
 import { useSettings } from "../../hooks/useSettings";
+import { commands } from "@/bindings";
 
 interface RemoteWhisperSettingsProps {
   descriptionMode?: "inline" | "tooltip";
@@ -72,6 +73,10 @@ export const RemoteWhisperSettings: React.FC<RemoteWhisperSettingsProps> =
     const language = getSetting("remote_whisper_language") ?? "auto";
     const temperature = getSetting("remote_whisper_temperature") ?? 0;
 
+    const [remoteModels, setRemoteModels] = useState<string[]>([]);
+    const [isFetchingModels, setIsFetchingModels] = useState(false);
+    const [modelsFetchError, setModelsFetchError] = useState<string | null>(null);
+
     const updateIfChanged = (key: any, value: any, current: any) => {
       if (value !== current) {
         void updateSetting(key, value);
@@ -101,9 +106,38 @@ export const RemoteWhisperSettings: React.FC<RemoteWhisperSettingsProps> =
         updateSetting("remote_whisper_base_url", "https://api.openai.com/v1");
         updateSetting("remote_whisper_model", "whisper-1");
       }
+      // Clear fetched models when provider changes
+      setRemoteModels([]);
+      setModelsFetchError(null);
+    };
+
+    const handleFetchModels = async () => {
+      setIsFetchingModels(true);
+      setModelsFetchError(null);
+      try {
+        const result = await commands.fetchRemoteWhisperModels();
+        if (result.status === "ok") {
+          setRemoteModels(result.data);
+          if (result.data.length === 0) {
+            setModelsFetchError("Модели не найдены");
+          }
+        } else {
+          setModelsFetchError(result.error);
+        }
+      } catch (e) {
+        setModelsFetchError(String(e));
+      } finally {
+        setIsFetchingModels(false);
+      }
     };
 
     const isPresetProvider = provider !== "custom";
+
+    const modelOptions = remoteModels.map((m) => ({ value: m, label: m }));
+    // If the current model is not in the fetched list, add it so it's selectable
+    if (model && !remoteModels.includes(model)) {
+      modelOptions.unshift({ value: model, label: model });
+    }
 
     return (
       <div className={`${grouped ? "" : "rounded-lg border border-mid-gray/20"}`}>
@@ -163,16 +197,50 @@ export const RemoteWhisperSettings: React.FC<RemoteWhisperSettingsProps> =
                 )
               }
             />
-            <TextSettingField
+
+            <SettingContainer
               title={t("settings.advanced.remoteWhisper.model.title")}
               description={t("settings.advanced.remoteWhisper.model.description")}
-              value={model}
-              placeholder="whisper-1"
+              descriptionMode="tooltip"
+              grouped
+              layout="stacked"
               disabled={isUpdating("remote_whisper_model")}
-              onCommit={(value) =>
-                updateIfChanged("remote_whisper_model", value.trim(), model)
-              }
-            />
+            >
+              <div className="flex gap-2 items-start">
+                <div className="flex-1">
+                  <Select
+                    value={model}
+                    options={modelOptions}
+                    onChange={(value) => {
+                      if (value) {
+                        updateSetting("remote_whisper_model", value);
+                      }
+                    }}
+                    placeholder="Выберите модель..."
+                    isClearable={false}
+                    isLoading={isFetchingModels}
+                    disabled={isUpdating("remote_whisper_model")}
+                  />
+                </div>
+                <button
+                  onClick={handleFetchModels}
+                  disabled={isFetchingModels || !apiKey.trim()}
+                  className="shrink-0 px-3 py-2 rounded-md text-sm font-medium
+                    bg-[color-mix(in_srgb,var(--color-logo-primary)_15%,transparent)]
+                    text-[var(--color-logo-primary)]
+                    hover:bg-[color-mix(in_srgb,var(--color-logo-primary)_25%,transparent)]
+                    disabled:opacity-40 disabled:cursor-not-allowed
+                    transition-colors"
+                  title={!apiKey.trim() ? "Сначала введите API-ключ" : "Загрузить список моделей"}
+                >
+                  {isFetchingModels ? "⏳" : "🔄"}
+                </button>
+              </div>
+              {modelsFetchError && (
+                <p className="text-xs text-red-500 mt-1">{modelsFetchError}</p>
+              )}
+            </SettingContainer>
+
             <TextSettingField
               title={t("settings.advanced.remoteWhisper.language.title")}
               description={t("settings.advanced.remoteWhisper.language.description")}

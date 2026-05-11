@@ -17,6 +17,7 @@ import { HistoryLimit } from "../HistoryLimit";
 import { RecordingRetentionPeriodSelector } from "../RecordingRetentionPeriod";
 import { ExperimentalToggle } from "../ExperimentalToggle";
 import { RemoteWhisperSettings } from "../RemoteWhisperSettings";
+import { ModelsDirectorySelector } from "../ModelsDirectorySelector";
 import { useSettings } from "../../../hooks/useSettings";
 import { KeyboardImplementationSelector } from "../debug/KeyboardImplementationSelector";
 
@@ -44,6 +45,7 @@ export const AdvancedSettings: React.FC = () => {
       </SettingsGroup>
 
       <SettingsGroup title={t("settings.advanced.groups.transcription")}>
+        <ModelsDirectorySelector descriptionMode="tooltip" grouped />
         <RemoteWhisperSettings descriptionMode="tooltip" grouped />
         <CustomWords descriptionMode="tooltip" grouped />
         <AppendTrailingSpace descriptionMode="tooltip" grouped={true} />

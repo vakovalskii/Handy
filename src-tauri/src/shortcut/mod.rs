@@ -18,9 +18,12 @@ pub mod windows_native;
 use log::{error, info, warn};
 use serde::Serialize;
 use specta::Type;
-use tauri::{AppHandle, Emitter, Manager};
+use std::sync::Arc;
+use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_autostart::ManagerExt;
 
+use crate::managers::model::ModelManager;
+use crate::managers::transcription::TranscriptionManager;
 use crate::settings::{
     self, get_settings, AutoSubmitKey, ClipboardHandling, KeyboardImplementation, LLMPrompt,
     OverlayPosition, PasteMethod, ShortcutBinding, SoundTheme, TypingTool,
@@ -798,10 +801,57 @@ pub fn change_experimental_enabled_setting(app: AppHandle, enabled: bool) -> Res
 
 #[tauri::command]
 #[specta::specta]
-pub fn change_remote_whisper_enabled_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
+pub fn change_remote_whisper_enabled_setting(
+    app: AppHandle,
+    transcription_manager: State<'_, Arc<TranscriptionManager>>,
+    model_manager: State<'_, Arc<ModelManager>>,
+    enabled: bool,
+) -> Result<(), String> {
     let mut settings = settings::get_settings(&app);
     settings.remote_whisper_enabled = enabled;
+
+    if enabled {
+        // Remote mode: unload local model and clear selection
+        if transcription_manager.is_model_loaded() {
+            info!("Remote Whisper enabled: unloading local model");
+            if let Err(e) = transcription_manager.unload_model() {
+                warn!("Failed to unload model when enabling remote: {}", e);
+            }
+        }
+        settings.selected_model = String::new();
+        info!("Remote Whisper enabled: cleared local model selection");
+    } else {
+        // Local mode: restore a downloaded model if none is selected
+        if settings.selected_model.is_empty() {
+            info!("Remote Whisper disabled: auto-selecting a local model");
+            if let Err(e) = model_manager.auto_select_model_if_needed() {
+                warn!("Failed to auto-select model when disabling remote: {}", e);
+            }
+            // Reload settings to get the newly selected model
+            settings = settings::get_settings(&app);
+        }
+
+        // Pre-load the selected model so it's ready immediately
+        if !settings.selected_model.is_empty() {
+            info!(
+                "Remote Whisper disabled: pre-loading local model '{}'",
+                settings.selected_model
+            );
+            transcription_manager.initiate_model_load();
+        }
+    }
+
     settings::write_settings(&app, settings);
+
+    // Notify frontend of the change
+    let _ = app.emit(
+        "settings-changed",
+        serde_json::json!({
+            "setting": "remote_whisper_enabled",
+            "value": enabled
+        }),
+    );
+
     Ok(())
 }
 
@@ -889,6 +939,41 @@ pub fn change_remote_whisper_temperature_setting(
     settings.remote_whisper_temperature = clamped;
     settings::write_settings(&app, settings);
     Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn fetch_remote_whisper_models(app: AppHandle) -> Result<Vec<String>, String> {
+    let settings = settings::get_settings(&app);
+
+    let base_url = settings.remote_whisper_base_url.trim().to_string();
+    if base_url.is_empty() {
+        return Err("Remote Whisper base URL is not configured".to_string());
+    }
+
+    let api_key = settings.remote_whisper_api_key.trim().to_string();
+    if api_key.is_empty() {
+        return Err("API key is required to fetch available models".to_string());
+    }
+
+    // Create a temporary PostProcessProvider to reuse fetch_models
+    let provider = settings::PostProcessProvider {
+        id: "remote_whisper".to_string(),
+        label: "Remote Whisper".to_string(),
+        base_url,
+        allow_base_url_edit: false,
+        models_endpoint: Some("/models".to_string()),
+    };
+
+    let mut models = crate::llm_client::fetch_models(&provider, api_key).await?;
+
+    // Filter to only whisper/audio models for Groq
+    if settings.remote_whisper_base_url.contains("api.groq.com") {
+        models.retain(|m| m.contains("whisper"));
+    }
+
+    models.sort();
+    Ok(models)
 }
 
 #[tauri::command]

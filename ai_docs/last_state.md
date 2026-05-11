@@ -24,3 +24,17 @@
   - `App.tsx`: добавлена проверка `remote_whisper_enabled` — если включён, onboarding модели пропускается.
   - `Onboarding.tsx`: добавлена кнопка «Или используйте Remote API (Groq, OpenAI) →» внизу экрана. При нажатии включается `remote_whisper_enabled` и переход к основному интерфейсу.
   - Добавлен импорт `useSettingsStore` в `Onboarding.tsx`.
+
+**2026-05-11**
+- **Произвольная папка для моделей**:
+  - Добавлена настройка `custom_models_directory` в `settings.rs`.
+  - `ModelManager` адаптирован для работы с кастомным путём через `Arc<Mutex<PathBuf>>`.
+  - Добавлены команды `get_models_directory`, `change_custom_models_directory`, `pick_models_directory`.
+  - Создан UI-компонент `ModelsDirectorySelector.tsx` в настройках Advanced → Transcription.
+- **Корректное переключение Local ↔ Remote**:
+  - `change_remote_whisper_enabled_setting` в `shortcut/mod.rs` теперь:
+    - При `enabled=true`: выгружает локальную модель, очищает `selected_model`, эмитит `settings-changed`
+    - При `enabled=false`: авто-выбирает первую скачанную модель, запускает `initiate_model_load()`
+  - UI обновлён: `ModelSelector` показывает имя провайдера при remote, `ModelsSettings` показывает notice banner.
+  - `App.tsx` слушает событие `settings-changed` для синхронизации состояния.
+  - Сборка Rust и TypeScript проходит успешно.

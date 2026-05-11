@@ -4,6 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 import { commands } from "@/bindings";
 import { getTranslatedModelName } from "../../lib/utils/modelTranslation";
 import { useModelStore } from "../../stores/modelStore";
+import { useSettings } from "../../hooks/useSettings";
 import ModelStatusButton from "./ModelStatusButton";
 import ModelDropdown from "./ModelDropdown";
 import DownloadProgressDisplay from "./DownloadProgressDisplay";
@@ -30,6 +31,7 @@ interface ModelSelectorProps {
 
 const ModelSelector: React.FC<ModelSelectorProps> = ({ onError }) => {
   const { t } = useTranslation();
+  const { getSetting } = useSettings();
   const {
     models,
     currentModel,
@@ -38,6 +40,9 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ onError }) => {
     extractingModels,
     selectModel,
   } = useModelStore();
+
+  const remoteWhisperEnabled = getSetting("remote_whisper_enabled") ?? false;
+  const remoteBaseUrl = getSetting("remote_whisper_base_url") ?? "";
 
   const [modelStatus, setModelStatus] = useState<ModelStatus>("unloaded");
   const [modelError, setModelError] = useState<string | null>(null);
@@ -157,6 +162,15 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ onError }) => {
   };
 
   const getModelDisplayText = (): string => {
+    if (remoteWhisperEnabled) {
+      const provider = remoteBaseUrl.includes("groq")
+        ? "Groq"
+        : remoteBaseUrl.includes("openai")
+          ? "OpenAI"
+          : t("settings.advanced.remoteWhisper.toggle.label");
+      return `${provider}`;
+    }
+
     const extractingKeys = Object.keys(extractingModels);
     if (extractingKeys.length > 0) {
       if (extractingKeys.length === 1) {
@@ -225,6 +239,7 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ onError }) => {
 
   // Derive display status from model status + store state
   const getDisplayStatus = (): ModelStatus => {
+    if (remoteWhisperEnabled) return "ready";
     if (Object.keys(extractingModels).length > 0) return "extracting";
     if (Object.keys(downloadProgress).length > 0) return "downloading";
     return modelStatus;
@@ -238,11 +253,15 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ onError }) => {
           status={getDisplayStatus()}
           displayText={getModelDisplayText()}
           isDropdownOpen={showModelDropdown}
-          onClick={() => setShowModelDropdown(!showModelDropdown)}
+          onClick={() => {
+            if (!remoteWhisperEnabled) {
+              setShowModelDropdown(!showModelDropdown);
+            }
+          }}
         />
 
         {/* Model Dropdown */}
-        {showModelDropdown && (
+        {showModelDropdown && !remoteWhisperEnabled && (
           <ModelDropdown
             models={models}
             currentModelId={displayModelId}

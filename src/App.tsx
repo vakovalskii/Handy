@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef } from "react";
 import { Toaster } from "sonner";
 import { useTranslation } from "react-i18next";
+import { listen } from "@tauri-apps/api/event";
 import { platform } from "@tauri-apps/plugin-os";
 import {
   checkAccessibilityPermission,
@@ -92,6 +93,17 @@ function App() {
       document.removeEventListener("keydown", handleKeyDown);
     };
   }, [settings?.debug_mode, updateSetting]);
+
+  // Listen for backend settings changes and refresh local state
+  useEffect(() => {
+    const refreshSettings = useSettingsStore.getState().refreshSettings;
+    const unlisten = listen("settings-changed", () => {
+      refreshSettings();
+    });
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+  }, []);
 
   const checkOnboardingStatus = async () => {
     try {

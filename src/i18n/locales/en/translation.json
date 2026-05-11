@@ -174,7 +174,8 @@
         "translation": "Translation",
         "allLanguages": "All Languages"
       },
-      "noModelsMatch": "No models match this filter."
+      "noModelsMatch": "No models match this filter.",
+      "remoteEnabledNotice": "Remote Whisper API is enabled. Local models are not used for transcription."
     },
     "sound": {
       "title": "Sound",
@@ -304,6 +305,16 @@
           "title": "Temperature",
           "description": "Sampling temperature sent to the remote endpoint (range 0-2)."
         }
+      },
+      "modelsDirectory": {
+        "title": "Models Directory",
+        "description": "Choose a custom folder for storing local transcription models. Leave empty to use the default app data directory.",
+        "change": "Change Folder",
+        "changed": "Models directory updated successfully",
+        "pickError": "Failed to select folder",
+        "reset": "Reset to default",
+        "resetError": "Failed to reset directory",
+        "default": "Default (App Data)"
       },
       "modelUnload": {
         "title": "Unload Model",

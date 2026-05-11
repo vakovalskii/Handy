@@ -55,7 +55,7 @@ pub struct DownloadProgress {
 
 pub struct ModelManager {
     app_handle: AppHandle,
-    models_dir: PathBuf,
+    models_dir: Arc<Mutex<PathBuf>>,
     available_models: Mutex<HashMap<String, ModelInfo>>,
     cancel_flags: Arc<Mutex<HashMap<String, Arc<AtomicBool>>>>,
     extracting_models: Arc<Mutex<HashSet<String>>>,
@@ -63,16 +63,29 @@ pub struct ModelManager {
 
 impl ModelManager {
     pub fn new(app_handle: &AppHandle) -> Result<Self> {
-        // Create models directory in app data
-        let models_dir = app_handle
-            .path()
-            .app_data_dir()
-            .map_err(|e| anyhow::anyhow!("Failed to get app data dir: {}", e))?
-            .join("models");
-
-        if !models_dir.exists() {
-            fs::create_dir_all(&models_dir)?;
-        }
+        // Determine models directory: use custom path from settings if set,
+        // otherwise fall back to the default app_data_dir/models
+        let settings = crate::settings::get_settings(app_handle);
+        let models_dir = match settings.custom_models_directory.as_ref() {
+            Some(path) if !path.is_empty() => {
+                let path = PathBuf::from(path);
+                if !path.exists() {
+                    fs::create_dir_all(&path)?;
+                }
+                path
+            }
+            _ => {
+                let path = app_handle
+                    .path()
+                    .app_data_dir()
+                    .map_err(|e| anyhow::anyhow!("Failed to get app data dir: {}", e))?
+                    .join("models");
+                if !path.exists() {
+                    fs::create_dir_all(&path)?;
+                }
+                path
+            }
+        };
 
         let mut available_models = HashMap::new();
 
@@ -328,7 +341,7 @@ impl ModelManager {
 
         let manager = Self {
             app_handle: app_handle.clone(),
-            models_dir,
+            models_dir: Arc::new(Mutex::new(models_dir)),
             available_models: Mutex::new(available_models),
             cancel_flags: Arc::new(Mutex::new(HashMap::new())),
             extracting_models: Arc::new(Mutex::new(HashSet::new())),
@@ -368,7 +381,8 @@ impl ModelManager {
 
             if let Ok(bundled_path) = bundled_path {
                 if bundled_path.exists() {
-                    let user_path = self.models_dir.join(filename);
+                    let models_dir = self.models_dir.lock().unwrap();
+                    let user_path = models_dir.join(filename);
 
                     // Only copy if user doesn't already have the model
                     if !user_path.exists() {
@@ -384,16 +398,15 @@ impl ModelManager {
     }
 
     fn update_download_status(&self) -> Result<()> {
+        let models_dir = self.models_dir.lock().unwrap();
         let mut models = self.available_models.lock().unwrap();
 
         for model in models.values_mut() {
             if model.is_directory {
                 // For directory-based models, check if the directory exists
-                let model_path = self.models_dir.join(&model.filename);
-                let partial_path = self.models_dir.join(format!("{}.partial", &model.filename));
-                let extracting_path = self
-                    .models_dir
-                    .join(format!("{}.extracting", &model.filename));
+                let model_path = models_dir.join(&model.filename);
+                let partial_path = models_dir.join(format!("{}.partial", &model.filename));
+                let extracting_path = models_dir.join(format!("{}.extracting", &model.filename));
 
                 // Clean up any leftover .extracting directories from interrupted extractions
                 // But only if this model is NOT currently being extracted
@@ -417,8 +430,8 @@ impl ModelManager {
                 }
             } else {
                 // For file-based models (existing logic)
-                let model_path = self.models_dir.join(&model.filename);
-                let partial_path = self.models_dir.join(format!("{}.partial", &model.filename));
+                let model_path = models_dir.join(&model.filename);
+                let partial_path = models_dir.join(format!("{}.partial", &model.filename));
 
                 model.is_downloaded = model_path.exists();
                 model.is_downloading = false;
@@ -435,7 +448,7 @@ impl ModelManager {
         Ok(())
     }
 
-    fn auto_select_model_if_needed(&self) -> Result<()> {
+    pub fn auto_select_model_if_needed(&self) -> Result<()> {
         let mut settings = get_settings(&self.app_handle);
 
         // Clear stale selection: selected model is set but doesn't exist
@@ -608,10 +621,13 @@ impl ModelManager {
         let url = model_info
             .url
             .ok_or_else(|| anyhow::anyhow!("No download URL for model"))?;
-        let model_path = self.models_dir.join(&model_info.filename);
-        let partial_path = self
-            .models_dir
-            .join(format!("{}.partial", &model_info.filename));
+        let (model_path, partial_path) = {
+            let models_dir = self.models_dir.lock().unwrap();
+            (
+                models_dir.join(&model_info.filename),
+                models_dir.join(format!("{}.partial", &model_info.filename)),
+            )
+        };
 
         // Don't download if complete version already exists
         if model_path.exists() {
@@ -842,10 +858,13 @@ impl ModelManager {
             info!("Extracting archive for directory-based model: {}", model_id);
 
             // Use a temporary extraction directory to ensure atomic operations
-            let temp_extract_dir = self
-                .models_dir
-                .join(format!("{}.extracting", &model_info.filename));
-            let final_model_dir = self.models_dir.join(&model_info.filename);
+            let (temp_extract_dir, final_model_dir) = {
+                let models_dir = self.models_dir.lock().unwrap();
+                (
+                    models_dir.join(format!("{}.extracting", &model_info.filename)),
+                    models_dir.join(&model_info.filename),
+                )
+            };
 
             // Clean up any previous incomplete extraction
             if temp_extract_dir.exists() {
@@ -959,10 +978,9 @@ impl ModelManager {
 
         debug!("ModelManager: Found model info: {:?}", model_info);
 
-        let model_path = self.models_dir.join(&model_info.filename);
-        let partial_path = self
-            .models_dir
-            .join(format!("{}.partial", &model_info.filename));
+        let models_dir = self.models_dir.lock().unwrap();
+        let model_path = models_dir.join(&model_info.filename);
+        let partial_path = models_dir.join(format!("{}.partial", &model_info.filename));
         debug!("ModelManager: Model path: {:?}", model_path);
         debug!("ModelManager: Partial path: {:?}", partial_path);
 
@@ -1033,10 +1051,9 @@ impl ModelManager {
             ));
         }
 
-        let model_path = self.models_dir.join(&model_info.filename);
-        let partial_path = self
-            .models_dir
-            .join(format!("{}.partial", &model_info.filename));
+        let models_dir = self.models_dir.lock().unwrap();
+        let model_path = models_dir.join(&model_info.filename);
+        let partial_path = models_dir.join(format!("{}.partial", &model_info.filename));
 
         if model_info.is_directory {
             // For directory-based models, ensure the directory exists and is complete
@@ -1090,6 +1107,57 @@ impl ModelManager {
         let _ = self.app_handle.emit("model-download-cancelled", model_id);
 
         info!("Download cancellation initiated for: {}", model_id);
+        Ok(())
+    }
+
+    pub fn get_models_dir(&self) -> PathBuf {
+        self.models_dir.lock().unwrap().clone()
+    }
+
+    pub fn set_models_dir(&self, new_dir: PathBuf) -> Result<()> {
+        if !new_dir.exists() {
+            fs::create_dir_all(&new_dir)?;
+        }
+
+        // Update the stored path
+        {
+            let mut dir = self.models_dir.lock().unwrap();
+            *dir = new_dir.clone();
+        }
+
+        // Reset model availability for predefined models and remove custom ones
+        {
+            let mut models = self.available_models.lock().unwrap();
+            // Remove custom models (they are tied to the old directory)
+            models.retain(|_, m| !m.is_custom);
+            // Reset download state for predefined models
+            for model in models.values_mut() {
+                model.is_downloaded = false;
+                model.is_downloading = false;
+                model.partial_size = 0;
+            }
+        }
+
+        // Re-discover custom models in the new directory
+        {
+            let mut models = self.available_models.lock().unwrap();
+            if let Err(e) = Self::discover_custom_whisper_models(&new_dir, &mut models) {
+                warn!("Failed to discover custom models in new directory: {}", e);
+            }
+        }
+
+        // Refresh download status based on new directory contents
+        self.update_download_status()?;
+
+        // Auto-select a model if none is currently selected
+        self.auto_select_model_if_needed()?;
+
+        // Notify the UI that models have been refreshed
+        let _ = self
+            .app_handle
+            .emit("models-refreshed", self.get_available_models());
+
+        info!("Models directory changed to: {:?}", new_dir);
         Ok(())
     }
 }
