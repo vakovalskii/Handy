@@ -226,9 +226,6 @@ impl ShortcutAction for TranscribeAction {
         }
 
         let binding_id = binding_id.to_string();
-        change_tray_icon(app, TrayIconState::Recording);
-        show_recording_overlay(app);
-
         let rm = app.state::<Arc<AudioRecordingManager>>();
 
         debug!("Microphone mode - always_on: {}", is_always_on);
@@ -273,6 +270,8 @@ impl ShortcutAction for TranscribeAction {
         }
 
         if recording_started {
+            change_tray_icon(app, TrayIconState::Recording);
+            show_recording_overlay(app);
             // Dynamically register the cancel shortcut in a separate task to avoid deadlock
             shortcut::register_cancel_shortcut(app);
         }
