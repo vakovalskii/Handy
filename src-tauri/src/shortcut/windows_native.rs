@@ -1,9 +1,10 @@
 #[cfg(target_os = "windows")]
 pub mod hook {
-    use log::{error, info};
-    use std::collections::HashSet;
+    use log::{debug, error, info};
+    use std::collections::HashMap;
     use std::sync::{LazyLock, Mutex, Once, OnceLock};
     use std::thread;
+    use std::time::{Duration, Instant};
     use tauri::AppHandle;
     use windows::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
     use windows::Win32::UI::WindowsAndMessaging::{
@@ -16,21 +17,33 @@ pub mod hook {
 
     static APP_HANDLE: OnceLock<AppHandle> = OnceLock::new();
     static INIT_ONCE: Once = Once::new();
-    static PRESSED_KEYS: LazyLock<Mutex<HashSet<&'static str>>> =
-        LazyLock::new(|| Mutex::new(HashSet::new()));
+    static PRESSED_KEYS: LazyLock<Mutex<HashMap<&'static str, Instant>>> =
+        LazyLock::new(|| Mutex::new(HashMap::new()));
+    const STALE_KEYDOWN_TIMEOUT: Duration = Duration::from_secs(2);
 
-    fn should_emit_key_event_for_set(
-        pressed_keys: &mut HashSet<&'static str>,
+    fn should_emit_key_event_for_map(
+        pressed_keys: &mut HashMap<&'static str, Instant>,
         key_name: &'static str,
         is_pressed: bool,
         is_released: bool,
+        now: Instant,
     ) -> bool {
         if is_pressed {
-            return pressed_keys.insert(key_name);
+            if let Some(previous_press) = pressed_keys.get_mut(key_name) {
+                if now.duration_since(*previous_press) > STALE_KEYDOWN_TIMEOUT {
+                    *previous_press = now;
+                    return true;
+                }
+
+                return false;
+            }
+
+            pressed_keys.insert(key_name, now);
+            return true;
         }
 
         if is_released {
-            return pressed_keys.remove(key_name);
+            return pressed_keys.remove(key_name).is_some();
         }
 
         false
@@ -41,7 +54,13 @@ pub mod hook {
             return false;
         };
 
-        should_emit_key_event_for_set(&mut pressed_keys, key_name, is_pressed, is_released)
+        should_emit_key_event_for_map(
+            &mut pressed_keys,
+            key_name,
+            is_pressed,
+            is_released,
+            Instant::now(),
+        )
     }
 
     pub fn init(app: AppHandle) {
@@ -155,6 +174,11 @@ pub mod hook {
                         }
 
                         if let Some(binding_id) = matched_binding_id {
+                            debug!(
+                                "Windows native shortcut matched: binding_id={}, key={}, pressed={}",
+                                binding_id, key_name, is_pressed
+                            );
+
                             let app_clone = app.clone();
                             let binding_id_clone = binding_id.clone();
                             let hotkey_string = key_name.to_string();
@@ -178,42 +202,70 @@ pub mod hook {
 
     #[cfg(test)]
     mod tests {
-        use super::should_emit_key_event_for_set;
-        use std::collections::HashSet;
+        use super::{should_emit_key_event_for_map, STALE_KEYDOWN_TIMEOUT};
+        use std::collections::HashMap;
+        use std::time::Instant;
 
         #[test]
         fn suppresses_repeated_modifier_keydown_until_release() {
-            let mut pressed_keys = HashSet::new();
+            let mut pressed_keys = HashMap::new();
+            let now = Instant::now();
 
-            assert!(should_emit_key_event_for_set(
+            assert!(should_emit_key_event_for_map(
                 &mut pressed_keys,
                 "ControlRight",
                 true,
-                false
+                false,
+                now
             ));
-            assert!(!should_emit_key_event_for_set(
+            assert!(!should_emit_key_event_for_map(
                 &mut pressed_keys,
                 "ControlRight",
                 true,
-                false
+                false,
+                now + STALE_KEYDOWN_TIMEOUT / 2
             ));
-            assert!(should_emit_key_event_for_set(
+            assert!(should_emit_key_event_for_map(
                 &mut pressed_keys,
                 "ControlRight",
                 false,
-                true
+                true,
+                now + STALE_KEYDOWN_TIMEOUT / 2
             ));
         }
 
         #[test]
         fn suppresses_release_without_prior_press() {
-            let mut pressed_keys = HashSet::new();
+            let mut pressed_keys = HashMap::new();
 
-            assert!(!should_emit_key_event_for_set(
+            assert!(!should_emit_key_event_for_map(
                 &mut pressed_keys,
                 "ControlRight",
                 false,
-                true
+                true,
+                Instant::now()
+            ));
+        }
+
+        #[test]
+        fn allows_new_keydown_after_stale_pressed_state() {
+            let mut pressed_keys = HashMap::new();
+            let first_press = Instant::now();
+            let second_press = first_press + STALE_KEYDOWN_TIMEOUT + STALE_KEYDOWN_TIMEOUT;
+
+            assert!(should_emit_key_event_for_map(
+                &mut pressed_keys,
+                "ControlRight",
+                true,
+                false,
+                first_press
+            ));
+            assert!(should_emit_key_event_for_map(
+                &mut pressed_keys,
+                "ControlRight",
+                true,
+                false,
+                second_press
             ));
         }
     }
