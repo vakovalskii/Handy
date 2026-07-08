@@ -64,19 +64,37 @@ pub fn init_shortcuts(app: &AppHandle) {
 
 /// Register the cancel shortcut (called when recording starts)
 pub fn register_cancel_shortcut(app: &AppHandle) {
-    let settings = get_settings(app);
-    match settings.keyboard_implementation {
-        KeyboardImplementation::Tauri => tauri_impl::register_cancel_shortcut(app),
-        KeyboardImplementation::HandyKeys => handy_keys::register_cancel_shortcut(app),
+    #[cfg(target_os = "windows")]
+    {
+        let _ = app;
+        warn!("Skipping dynamic cancel shortcut registration on Windows");
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let settings = get_settings(app);
+        match settings.keyboard_implementation {
+            KeyboardImplementation::Tauri => tauri_impl::register_cancel_shortcut(app),
+            KeyboardImplementation::HandyKeys => handy_keys::register_cancel_shortcut(app),
+        }
     }
 }
 
 /// Unregister the cancel shortcut (called when recording stops)
 pub fn unregister_cancel_shortcut(app: &AppHandle) {
-    let settings = get_settings(app);
-    match settings.keyboard_implementation {
-        KeyboardImplementation::Tauri => tauri_impl::unregister_cancel_shortcut(app),
-        KeyboardImplementation::HandyKeys => handy_keys::unregister_cancel_shortcut(app),
+    #[cfg(target_os = "windows")]
+    {
+        let _ = app;
+        warn!("Skipping dynamic cancel shortcut unregistration on Windows");
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let settings = get_settings(app);
+        match settings.keyboard_implementation {
+            KeyboardImplementation::Tauri => tauri_impl::unregister_cancel_shortcut(app),
+            KeyboardImplementation::HandyKeys => handy_keys::unregister_cancel_shortcut(app),
+        }
     }
 }
 
