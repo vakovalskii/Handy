@@ -2,7 +2,7 @@ use crate::managers::audio::AudioRecordingManager;
 use crate::managers::transcription::TranscriptionManager;
 use crate::shortcut;
 use crate::ManagedToggleState;
-use log::{info, warn};
+use log::{error, info, warn};
 use std::sync::Arc;
 use tauri::{AppHandle, Manager};
 
@@ -33,9 +33,14 @@ pub fn cancel_current_operation(app: &AppHandle) {
     let audio_manager = app.state::<Arc<AudioRecordingManager>>();
     audio_manager.cancel_recording();
 
-    // Update tray icon and hide overlay
-    change_tray_icon(app, crate::tray::TrayIconState::Idle);
-    hide_recording_overlay(app);
+    // Update tray icon and hide overlay on the UI thread.
+    let app_clone = app.clone();
+    if let Err(e) = app.run_on_main_thread(move || {
+        change_tray_icon(&app_clone, crate::tray::TrayIconState::Idle);
+        hide_recording_overlay(&app_clone);
+    }) {
+        error!("Failed to run cancellation UI update: {:?}", e);
+    }
 
     // Unload model if immediate unload is enabled
     let tm = app.state::<Arc<TranscriptionManager>>();

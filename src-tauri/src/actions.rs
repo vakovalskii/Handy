@@ -31,6 +31,21 @@ struct TranscribeAction {
     post_process: bool,
 }
 
+fn run_ui_update(
+    app: &AppHandle,
+    label: &'static str,
+    update: impl FnOnce(AppHandle) + Send + 'static,
+) {
+    let app_clone = app.clone();
+    if let Err(e) = app.run_on_main_thread(move || {
+        debug!("Starting UI update: {}", label);
+        update(app_clone);
+        debug!("Finished UI update: {}", label);
+    }) {
+        error!("Failed to run UI update '{}': {:?}", label, e);
+    }
+}
+
 async fn post_process_transcription(settings: &AppSettings, transcription: &str) -> Option<String> {
     let provider = match settings.active_post_process_provider().cloned() {
         Some(provider) => provider,
@@ -270,8 +285,11 @@ impl ShortcutAction for TranscribeAction {
         }
 
         if recording_started {
-            change_tray_icon(app, TrayIconState::Recording);
-            show_recording_overlay(app);
+            run_ui_update(app, "recording_started", |app| {
+                change_tray_icon(&app, TrayIconState::Recording);
+                show_recording_overlay(&app);
+            });
+
             // Dynamically register the cancel shortcut in a separate task to avoid deadlock
             shortcut::register_cancel_shortcut(app);
         }
@@ -294,8 +312,10 @@ impl ShortcutAction for TranscribeAction {
         let tm = Arc::clone(&app.state::<Arc<TranscriptionManager>>());
         let hm = Arc::clone(&app.state::<Arc<HistoryManager>>());
 
-        change_tray_icon(app, TrayIconState::Transcribing);
-        show_transcribing_overlay(app);
+        run_ui_update(app, "recording_stopped", |app| {
+            change_tray_icon(&app, TrayIconState::Transcribing);
+            show_transcribing_overlay(&app);
+        });
 
         // Unmute before playing audio feedback so the stop sound is audible
         rm.remove_mute();
@@ -352,7 +372,9 @@ impl ShortcutAction for TranscribeAction {
                             // Then apply LLM post-processing if this is the post-process hotkey
                             // Uses final_text which may already have Chinese conversion applied
                             if post_process {
-                                show_processing_overlay(&ah);
+                                run_ui_update(&ah, "post_processing", |app| {
+                                    show_processing_overlay(&app);
+                                });
                             }
                             let processed = if post_process {
                                 post_process_transcription(&settings, &final_text).await
@@ -412,24 +434,32 @@ impl ShortcutAction for TranscribeAction {
                             })
                             .unwrap_or_else(|e| {
                                 error!("Failed to run paste on main thread: {:?}", e);
-                                utils::hide_recording_overlay(&ah);
-                                change_tray_icon(&ah, TrayIconState::Idle);
+                                run_ui_update(&ah, "paste_main_thread_error", |app| {
+                                    utils::hide_recording_overlay(&app);
+                                    change_tray_icon(&app, TrayIconState::Idle);
+                                });
                             });
                         } else {
-                            utils::hide_recording_overlay(&ah);
-                            change_tray_icon(&ah, TrayIconState::Idle);
+                            run_ui_update(&ah, "empty_transcription", |app| {
+                                utils::hide_recording_overlay(&app);
+                                change_tray_icon(&app, TrayIconState::Idle);
+                            });
                         }
                     }
                     Err(err) => {
                         debug!("Global Shortcut Transcription error: {}", err);
-                        utils::hide_recording_overlay(&ah);
-                        change_tray_icon(&ah, TrayIconState::Idle);
+                        run_ui_update(&ah, "transcription_error", |app| {
+                            utils::hide_recording_overlay(&app);
+                            change_tray_icon(&app, TrayIconState::Idle);
+                        });
                     }
                 }
             } else {
                 debug!("No samples retrieved from recording stop");
-                utils::hide_recording_overlay(&ah);
-                change_tray_icon(&ah, TrayIconState::Idle);
+                run_ui_update(&ah, "no_samples", |app| {
+                    utils::hide_recording_overlay(&app);
+                    change_tray_icon(&app, TrayIconState::Idle);
+                });
             }
 
             // Clear toggle state now that transcription is complete
