@@ -36,13 +36,24 @@ fn run_ui_update(
     label: &'static str,
     update: impl FnOnce(AppHandle) + Send + 'static,
 ) {
-    let app_clone = app.clone();
-    if let Err(e) = app.run_on_main_thread(move || {
-        debug!("Starting UI update: {}", label);
-        update(app_clone);
-        debug!("Finished UI update: {}", label);
-    }) {
-        error!("Failed to run UI update '{}': {:?}", label, e);
+    #[cfg(target_os = "windows")]
+    {
+        let _ = app;
+        let _ = update;
+        debug!("Skipping UI update on Windows: {}", label);
+        return;
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let app_clone = app.clone();
+        if let Err(e) = app.run_on_main_thread(move || {
+            debug!("Starting UI update: {}", label);
+            update(app_clone);
+            debug!("Finished UI update: {}", label);
+        }) {
+            error!("Failed to run UI update '{}': {:?}", label, e);
+        }
     }
 }
 
@@ -428,9 +439,14 @@ impl ShortcutAction for TranscribeAction {
                                     ),
                                     Err(e) => error!("Failed to paste transcription: {}", e),
                                 }
-                                // Hide the overlay after transcription is complete
-                                utils::hide_recording_overlay(&ah_clone);
-                                change_tray_icon(&ah_clone, TrayIconState::Idle);
+                                #[cfg(target_os = "windows")]
+                                debug!("Skipping completion UI update on Windows");
+                                #[cfg(not(target_os = "windows"))]
+                                {
+                                    // Hide the overlay after transcription is complete
+                                    utils::hide_recording_overlay(&ah_clone);
+                                    change_tray_icon(&ah_clone, TrayIconState::Idle);
+                                }
                             })
                             .unwrap_or_else(|e| {
                                 error!("Failed to run paste on main thread: {:?}", e);
