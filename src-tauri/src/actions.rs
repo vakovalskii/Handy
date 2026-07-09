@@ -1,5 +1,6 @@
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 use crate::apple_intelligence;
+#[cfg(not(target_os = "windows"))]
 use crate::audio_feedback::{play_feedback_sound, play_feedback_sound_blocking, SoundType};
 use crate::managers::audio::AudioRecordingManager;
 use crate::managers::history::HistoryManager;
@@ -260,14 +261,19 @@ impl ShortcutAction for TranscribeAction {
         if is_always_on {
             // Always-on mode: Play audio feedback immediately, then apply mute after sound finishes
             debug!("Always-on mode: Playing audio feedback immediately");
-            let rm_clone = Arc::clone(&rm);
-            let app_clone = app.clone();
-            // The blocking helper exits immediately if audio feedback is disabled,
-            // so we can always reuse this thread to ensure mute happens right after playback.
-            std::thread::spawn(move || {
-                play_feedback_sound_blocking(&app_clone, SoundType::Start);
-                rm_clone.apply_mute();
-            });
+            #[cfg(target_os = "windows")]
+            debug!("Skipping audio feedback/mute sequence on Windows");
+            #[cfg(not(target_os = "windows"))]
+            {
+                let rm_clone = Arc::clone(&rm);
+                let app_clone = app.clone();
+                // The blocking helper exits immediately if audio feedback is disabled,
+                // so we can always reuse this thread to ensure mute happens right after playback.
+                std::thread::spawn(move || {
+                    play_feedback_sound_blocking(&app_clone, SoundType::Start);
+                    rm_clone.apply_mute();
+                });
+            }
 
             recording_started = rm.try_start_recording(&binding_id);
             debug!("Recording started: {}", recording_started);
@@ -280,16 +286,21 @@ impl ShortcutAction for TranscribeAction {
                 recording_started = true;
                 debug!("Recording started in {:?}", recording_start_time.elapsed());
                 // Small delay to ensure microphone stream is active
-                let app_clone = app.clone();
-                let rm_clone = Arc::clone(&rm);
-                std::thread::spawn(move || {
-                    std::thread::sleep(std::time::Duration::from_millis(100));
-                    debug!("Handling delayed audio feedback/mute sequence");
-                    // Helper handles disabled audio feedback by returning early, so we reuse it
-                    // to keep mute sequencing consistent in every mode.
-                    play_feedback_sound_blocking(&app_clone, SoundType::Start);
-                    rm_clone.apply_mute();
-                });
+                #[cfg(target_os = "windows")]
+                debug!("Skipping delayed audio feedback/mute sequence on Windows");
+                #[cfg(not(target_os = "windows"))]
+                {
+                    let app_clone = app.clone();
+                    let rm_clone = Arc::clone(&rm);
+                    std::thread::spawn(move || {
+                        std::thread::sleep(std::time::Duration::from_millis(100));
+                        debug!("Handling delayed audio feedback/mute sequence");
+                        // Helper handles disabled audio feedback by returning early, so we reuse it
+                        // to keep mute sequencing consistent in every mode.
+                        play_feedback_sound_blocking(&app_clone, SoundType::Start);
+                        rm_clone.apply_mute();
+                    });
+                }
             } else {
                 debug!("Failed to start recording");
             }
@@ -328,11 +339,16 @@ impl ShortcutAction for TranscribeAction {
             show_transcribing_overlay(&app);
         });
 
-        // Unmute before playing audio feedback so the stop sound is audible
-        rm.remove_mute();
+        #[cfg(target_os = "windows")]
+        debug!("Skipping stop audio feedback/mute sequence on Windows");
+        #[cfg(not(target_os = "windows"))]
+        {
+            // Unmute before playing audio feedback so the stop sound is audible
+            rm.remove_mute();
 
-        // Play audio feedback for recording stop
-        play_feedback_sound(app, SoundType::Stop);
+            // Play audio feedback for recording stop
+            play_feedback_sound(app, SoundType::Stop);
+        }
 
         let binding_id = binding_id.to_string(); // Clone binding_id for the async task
         let post_process = self.post_process;
