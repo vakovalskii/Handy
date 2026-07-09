@@ -376,6 +376,12 @@ export const useModelStore = create<ModelsStore>()(
         get().loadCurrentModel();
       });
 
+      listen<ModelInfo[]>("models-refreshed", () => {
+        get().loadModels();
+        get().loadCurrentModel();
+        get().checkFirstRun();
+      });
+
       set({ initialized: true });
     },
   })),

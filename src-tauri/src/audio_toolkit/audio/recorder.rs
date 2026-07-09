@@ -253,6 +253,8 @@ fn run_consumer(
     );
 
     let mut processed_samples = Vec::<f32>::new();
+    let mut pre_roll_samples = Vec::<f32>::new();
+    let max_pre_roll_samples = constants::WHISPER_SAMPLE_RATE as usize / 2;
     let mut recording = false;
 
     // ---------- spectrum visualisation setup ---------------------------- //
@@ -287,11 +289,84 @@ fn run_consumer(
         }
     }
 
+    fn store_pre_roll_frame(
+        samples: &[f32],
+        pre_roll_samples: &mut Vec<f32>,
+        max_pre_roll_samples: usize,
+    ) {
+        pre_roll_samples.extend_from_slice(samples);
+        let overflow = pre_roll_samples.len().saturating_sub(max_pre_roll_samples);
+        if overflow > 0 {
+            pre_roll_samples.drain(..overflow);
+        }
+    }
+
+    fn process_pending_commands(
+        cmd_rx: &mpsc::Receiver<Cmd>,
+        recording: &mut bool,
+        processed_samples: &mut Vec<f32>,
+        pre_roll_samples: &mut Vec<f32>,
+        frame_resampler: &mut FrameResampler,
+        vad: &Option<Arc<Mutex<Box<dyn vad::VoiceActivityDetector>>>>,
+        visualizer: &mut AudioVisualiser,
+    ) -> bool {
+        while let Ok(cmd) = cmd_rx.try_recv() {
+            match cmd {
+                Cmd::Start => {
+                    processed_samples.clear();
+                    processed_samples.extend(std::mem::take(pre_roll_samples));
+                    *recording = true;
+                    visualizer.reset();
+                    if let Some(v) = vad {
+                        v.lock().unwrap().reset();
+                    }
+                }
+                Cmd::Stop(reply_tx) => {
+                    *recording = false;
+
+                    frame_resampler.finish(&mut |frame: &[f32]| {
+                        // We still want to process the last few frames.
+                        handle_frame(frame, true, vad, processed_samples)
+                    });
+
+                    let _ = reply_tx.send(std::mem::take(processed_samples));
+                }
+                Cmd::Shutdown => return true,
+            }
+        }
+
+        false
+    }
+
     loop {
+        if process_pending_commands(
+            &cmd_rx,
+            &mut recording,
+            &mut processed_samples,
+            &mut pre_roll_samples,
+            &mut frame_resampler,
+            &vad,
+            &mut visualizer,
+        ) {
+            return;
+        }
+
         let raw = match sample_rx.recv() {
             Ok(s) => s,
             Err(_) => break, // stream closed
         };
+
+        if process_pending_commands(
+            &cmd_rx,
+            &mut recording,
+            &mut processed_samples,
+            &mut pre_roll_samples,
+            &mut frame_resampler,
+            &vad,
+            &mut visualizer,
+        ) {
+            return;
+        }
 
         // ---------- spectrum processing ---------------------------------- //
         if let Some(buckets) = visualizer.feed(&raw) {
@@ -302,32 +377,107 @@ fn run_consumer(
 
         // ---------- existing pipeline ------------------------------------ //
         frame_resampler.push(&raw, &mut |frame: &[f32]| {
-            handle_frame(frame, recording, &vad, &mut processed_samples)
+            if recording {
+                handle_frame(frame, recording, &vad, &mut processed_samples);
+            } else {
+                store_pre_roll_frame(frame, &mut pre_roll_samples, max_pre_roll_samples);
+            }
         });
 
-        // non-blocking check for a command
-        while let Ok(cmd) = cmd_rx.try_recv() {
-            match cmd {
-                Cmd::Start => {
-                    processed_samples.clear();
-                    recording = true;
-                    visualizer.reset(); // Reset visualization buffer
-                    if let Some(v) = &vad {
-                        v.lock().unwrap().reset();
-                    }
-                }
-                Cmd::Stop(reply_tx) => {
-                    recording = false;
-
-                    frame_resampler.finish(&mut |frame: &[f32]| {
-                        // we still want to process the last few frames
-                        handle_frame(frame, true, &vad, &mut processed_samples)
-                    });
-
-                    let _ = reply_tx.send(std::mem::take(&mut processed_samples));
-                }
-                Cmd::Shutdown => return,
-            }
+        if process_pending_commands(
+            &cmd_rx,
+            &mut recording,
+            &mut processed_samples,
+            &mut pre_roll_samples,
+            &mut frame_resampler,
+            &vad,
+            &mut visualizer,
+        ) {
+            return;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{run_consumer, Cmd};
+    use crate::audio_toolkit::constants;
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    #[test]
+    fn records_first_frame_when_start_is_queued_before_audio_arrives() {
+        let (sample_tx, sample_rx) = mpsc::channel::<Vec<f32>>();
+        let (cmd_tx, cmd_rx) = mpsc::channel::<Cmd>();
+
+        let worker = std::thread::spawn(move || {
+            run_consumer(
+                constants::WHISPER_SAMPLE_RATE,
+                None,
+                sample_rx,
+                cmd_rx,
+                None,
+            );
+        });
+
+        let first_frame = vec![0.25; 480];
+        let after_stop_frame = vec![0.75; 480];
+
+        cmd_tx.send(Cmd::Start).unwrap();
+        sample_tx.send(first_frame.clone()).unwrap();
+        std::thread::sleep(Duration::from_millis(50));
+
+        let (reply_tx, reply_rx) = mpsc::channel();
+        cmd_tx.send(Cmd::Stop(reply_tx)).unwrap();
+        sample_tx.send(after_stop_frame).unwrap();
+
+        let recorded = reply_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+
+        cmd_tx.send(Cmd::Shutdown).unwrap();
+        sample_tx.send(vec![0.0; 480]).unwrap();
+        worker.join().unwrap();
+
+        assert_eq!(recorded, first_frame);
+    }
+
+    #[test]
+    fn includes_preroll_audio_when_recording_starts() {
+        let (sample_tx, sample_rx) = mpsc::channel::<Vec<f32>>();
+        let (cmd_tx, cmd_rx) = mpsc::channel::<Cmd>();
+
+        let worker = std::thread::spawn(move || {
+            run_consumer(
+                constants::WHISPER_SAMPLE_RATE,
+                None,
+                sample_rx,
+                cmd_rx,
+                None,
+            );
+        });
+
+        let preroll_frame = vec![0.125; 480];
+        let recording_frame = vec![0.25; 480];
+
+        sample_tx.send(preroll_frame.clone()).unwrap();
+        std::thread::sleep(Duration::from_millis(50));
+
+        cmd_tx.send(Cmd::Start).unwrap();
+        sample_tx.send(recording_frame.clone()).unwrap();
+        std::thread::sleep(Duration::from_millis(50));
+
+        let (reply_tx, reply_rx) = mpsc::channel();
+        cmd_tx.send(Cmd::Stop(reply_tx)).unwrap();
+        sample_tx.send(vec![0.0; 480]).unwrap();
+
+        let recorded = reply_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+
+        cmd_tx.send(Cmd::Shutdown).unwrap();
+        sample_tx.send(vec![0.0; 480]).unwrap();
+        worker.join().unwrap();
+
+        let mut expected = preroll_frame;
+        expected.extend_from_slice(&recording_frame);
+
+        assert_eq!(recorded, expected);
     }
 }

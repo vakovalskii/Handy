@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef } from "react";
 import { Toaster } from "sonner";
 import { useTranslation } from "react-i18next";
+import { listen } from "@tauri-apps/api/event";
 import { platform } from "@tauri-apps/plugin-os";
 import {
   checkAccessibilityPermission,
@@ -93,13 +94,35 @@ function App() {
     };
   }, [settings?.debug_mode, updateSetting]);
 
+  // Listen for backend settings changes and refresh local state
+  useEffect(() => {
+    const refreshSettings = useSettingsStore.getState().refreshSettings;
+    const unlisten = listen("settings-changed", () => {
+      refreshSettings();
+    });
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+  }, []);
+
   const checkOnboardingStatus = async () => {
     try {
       // Check if they have any models available
       const result = await commands.hasAnyModelsAvailable();
       const hasModels = result.status === "ok" && result.data;
 
-      if (hasModels) {
+      // Also check if remote whisper is enabled (e.g. Groq API)
+      let hasRemoteWhisper = false;
+      try {
+        const settingsResult = await commands.getAppSettings();
+        if (settingsResult.status === "ok") {
+          hasRemoteWhisper = settingsResult.data.remote_whisper_enabled === true;
+        }
+      } catch (e) {
+        console.warn("Failed to check remote whisper settings:", e);
+      }
+
+      if (hasModels || hasRemoteWhisper) {
         // Returning user - but check if they need to grant permissions on macOS
         setIsReturningUser(true);
         if (platform() === "macos") {

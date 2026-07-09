@@ -63,6 +63,15 @@ pub fn validate_shortcut(raw: &str) -> Result<(), String> {
     if has_non_modifier {
         Ok(())
     } else {
+        #[cfg(target_os = "windows")]
+        {
+            if parts.len() == 1 {
+                let p = parts[0].as_str();
+                if p == "controlright" || p == "altright" || p == "controlleft" || p == "altleft" || p == "rightcontrol" || p == "rightalt" || p == "shiftright" || p == "shiftleft" {
+                    return Ok(());
+                }
+            }
+        }
         Err("Tauri shortcuts must include a main key (letter, number, F-key, etc.) in addition to modifiers".into())
     }
 }
@@ -82,6 +91,13 @@ pub fn register_shortcut(app: &AppHandle, binding: ShortcutBinding) -> Result<()
     let shortcut = match binding.current_binding.parse::<Shortcut>() {
         Ok(s) => s,
         Err(e) => {
+            #[cfg(target_os = "windows")]
+            {
+                let raw = binding.current_binding.to_lowercase();
+                if raw == "controlright" || raw == "altright" || raw == "controlleft" || raw == "altleft" || raw == "rightcontrol" || raw == "rightalt" || raw == "shiftright" || raw == "shiftleft" {
+                    return Ok(()); // Handled by native hook
+                }
+            }
             let error_msg = format!(
                 "Failed to parse shortcut '{}': {}",
                 binding.current_binding, e
@@ -131,6 +147,13 @@ pub fn unregister_shortcut(app: &AppHandle, binding: ShortcutBinding) -> Result<
     let shortcut = match binding.current_binding.parse::<Shortcut>() {
         Ok(s) => s,
         Err(e) => {
+            #[cfg(target_os = "windows")]
+            {
+                let raw = binding.current_binding.to_lowercase();
+                if raw == "controlright" || raw == "altright" || raw == "controlleft" || raw == "altleft" || raw == "rightcontrol" || raw == "rightalt" || raw == "shiftright" || raw == "shiftleft" {
+                    return Ok(()); // Handled by native hook
+                }
+            }
             let error_msg = format!(
                 "Failed to parse shortcut '{}' for unregistration: {}",
                 binding.current_binding, e

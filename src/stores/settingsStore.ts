@@ -147,6 +147,10 @@ const settingUpdaters: {
     commands.changeExperimentalEnabledSetting(value as boolean),
   show_tray_icon: (value) =>
     commands.changeShowTrayIconSetting(value as boolean),
+  custom_models_directory: (value) => {
+    const path = value === null || value === undefined ? "" : String(value);
+    return commands.changeCustomModelsDirectory(path);
+  },
 };
 
 export const useSettingsStore = create<SettingsStore>()(

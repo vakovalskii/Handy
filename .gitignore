@@ -37,3 +37,7 @@ blob-report/
 
 .direnv
 .envrc
+src-tauri/build_log.txt
+
+# AI assistant docs
+ai_docs/

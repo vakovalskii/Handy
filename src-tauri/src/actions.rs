@@ -1,5 +1,6 @@
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 use crate::apple_intelligence;
+#[cfg(not(target_os = "windows"))]
 use crate::audio_feedback::{play_feedback_sound, play_feedback_sound_blocking, SoundType};
 use crate::managers::audio::AudioRecordingManager;
 use crate::managers::history::HistoryManager;
@@ -29,6 +30,32 @@ pub trait ShortcutAction: Send + Sync {
 // Transcribe Action
 struct TranscribeAction {
     post_process: bool,
+}
+
+fn run_ui_update(
+    app: &AppHandle,
+    label: &'static str,
+    update: impl FnOnce(AppHandle) + Send + 'static,
+) {
+    #[cfg(target_os = "windows")]
+    {
+        let _ = app;
+        let _ = update;
+        debug!("Skipping UI update on Windows: {}", label);
+        return;
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let app_clone = app.clone();
+        if let Err(e) = app.run_on_main_thread(move || {
+            debug!("Starting UI update: {}", label);
+            update(app_clone);
+            debug!("Finished UI update: {}", label);
+        }) {
+            error!("Failed to run UI update '{}': {:?}", label, e);
+        }
+    }
 }
 
 async fn post_process_transcription(settings: &AppSettings, transcription: &str) -> Option<String> {
@@ -226,9 +253,6 @@ impl ShortcutAction for TranscribeAction {
         }
 
         let binding_id = binding_id.to_string();
-        change_tray_icon(app, TrayIconState::Recording);
-        show_recording_overlay(app);
-
         let rm = app.state::<Arc<AudioRecordingManager>>();
 
         debug!("Microphone mode - always_on: {}", is_always_on);
@@ -237,14 +261,19 @@ impl ShortcutAction for TranscribeAction {
         if is_always_on {
             // Always-on mode: Play audio feedback immediately, then apply mute after sound finishes
             debug!("Always-on mode: Playing audio feedback immediately");
-            let rm_clone = Arc::clone(&rm);
-            let app_clone = app.clone();
-            // The blocking helper exits immediately if audio feedback is disabled,
-            // so we can always reuse this thread to ensure mute happens right after playback.
-            std::thread::spawn(move || {
-                play_feedback_sound_blocking(&app_clone, SoundType::Start);
-                rm_clone.apply_mute();
-            });
+            #[cfg(target_os = "windows")]
+            debug!("Skipping audio feedback/mute sequence on Windows");
+            #[cfg(not(target_os = "windows"))]
+            {
+                let rm_clone = Arc::clone(&rm);
+                let app_clone = app.clone();
+                // The blocking helper exits immediately if audio feedback is disabled,
+                // so we can always reuse this thread to ensure mute happens right after playback.
+                std::thread::spawn(move || {
+                    play_feedback_sound_blocking(&app_clone, SoundType::Start);
+                    rm_clone.apply_mute();
+                });
+            }
 
             recording_started = rm.try_start_recording(&binding_id);
             debug!("Recording started: {}", recording_started);
@@ -257,22 +286,32 @@ impl ShortcutAction for TranscribeAction {
                 recording_started = true;
                 debug!("Recording started in {:?}", recording_start_time.elapsed());
                 // Small delay to ensure microphone stream is active
-                let app_clone = app.clone();
-                let rm_clone = Arc::clone(&rm);
-                std::thread::spawn(move || {
-                    std::thread::sleep(std::time::Duration::from_millis(100));
-                    debug!("Handling delayed audio feedback/mute sequence");
-                    // Helper handles disabled audio feedback by returning early, so we reuse it
-                    // to keep mute sequencing consistent in every mode.
-                    play_feedback_sound_blocking(&app_clone, SoundType::Start);
-                    rm_clone.apply_mute();
-                });
+                #[cfg(target_os = "windows")]
+                debug!("Skipping delayed audio feedback/mute sequence on Windows");
+                #[cfg(not(target_os = "windows"))]
+                {
+                    let app_clone = app.clone();
+                    let rm_clone = Arc::clone(&rm);
+                    std::thread::spawn(move || {
+                        std::thread::sleep(std::time::Duration::from_millis(100));
+                        debug!("Handling delayed audio feedback/mute sequence");
+                        // Helper handles disabled audio feedback by returning early, so we reuse it
+                        // to keep mute sequencing consistent in every mode.
+                        play_feedback_sound_blocking(&app_clone, SoundType::Start);
+                        rm_clone.apply_mute();
+                    });
+                }
             } else {
                 debug!("Failed to start recording");
             }
         }
 
         if recording_started {
+            run_ui_update(app, "recording_started", |app| {
+                change_tray_icon(&app, TrayIconState::Recording);
+                show_recording_overlay(&app);
+            });
+
             // Dynamically register the cancel shortcut in a separate task to avoid deadlock
             shortcut::register_cancel_shortcut(app);
         }
@@ -295,14 +334,21 @@ impl ShortcutAction for TranscribeAction {
         let tm = Arc::clone(&app.state::<Arc<TranscriptionManager>>());
         let hm = Arc::clone(&app.state::<Arc<HistoryManager>>());
 
-        change_tray_icon(app, TrayIconState::Transcribing);
-        show_transcribing_overlay(app);
+        run_ui_update(app, "recording_stopped", |app| {
+            change_tray_icon(&app, TrayIconState::Transcribing);
+            show_transcribing_overlay(&app);
+        });
 
-        // Unmute before playing audio feedback so the stop sound is audible
-        rm.remove_mute();
+        #[cfg(target_os = "windows")]
+        debug!("Skipping stop audio feedback/mute sequence on Windows");
+        #[cfg(not(target_os = "windows"))]
+        {
+            // Unmute before playing audio feedback so the stop sound is audible
+            rm.remove_mute();
 
-        // Play audio feedback for recording stop
-        play_feedback_sound(app, SoundType::Stop);
+            // Play audio feedback for recording stop
+            play_feedback_sound(app, SoundType::Stop);
+        }
 
         let binding_id = binding_id.to_string(); // Clone binding_id for the async task
         let post_process = self.post_process;
@@ -353,7 +399,9 @@ impl ShortcutAction for TranscribeAction {
                             // Then apply LLM post-processing if this is the post-process hotkey
                             // Uses final_text which may already have Chinese conversion applied
                             if post_process {
-                                show_processing_overlay(&ah);
+                                run_ui_update(&ah, "post_processing", |app| {
+                                    show_processing_overlay(&app);
+                                });
                             }
                             let processed = if post_process {
                                 post_process_transcription(&settings, &final_text).await
@@ -407,30 +455,43 @@ impl ShortcutAction for TranscribeAction {
                                     ),
                                     Err(e) => error!("Failed to paste transcription: {}", e),
                                 }
-                                // Hide the overlay after transcription is complete
-                                utils::hide_recording_overlay(&ah_clone);
-                                change_tray_icon(&ah_clone, TrayIconState::Idle);
+                                #[cfg(target_os = "windows")]
+                                debug!("Skipping completion UI update on Windows");
+                                #[cfg(not(target_os = "windows"))]
+                                {
+                                    // Hide the overlay after transcription is complete
+                                    utils::hide_recording_overlay(&ah_clone);
+                                    change_tray_icon(&ah_clone, TrayIconState::Idle);
+                                }
                             })
                             .unwrap_or_else(|e| {
                                 error!("Failed to run paste on main thread: {:?}", e);
-                                utils::hide_recording_overlay(&ah);
-                                change_tray_icon(&ah, TrayIconState::Idle);
+                                run_ui_update(&ah, "paste_main_thread_error", |app| {
+                                    utils::hide_recording_overlay(&app);
+                                    change_tray_icon(&app, TrayIconState::Idle);
+                                });
                             });
                         } else {
-                            utils::hide_recording_overlay(&ah);
-                            change_tray_icon(&ah, TrayIconState::Idle);
+                            run_ui_update(&ah, "empty_transcription", |app| {
+                                utils::hide_recording_overlay(&app);
+                                change_tray_icon(&app, TrayIconState::Idle);
+                            });
                         }
                     }
                     Err(err) => {
                         debug!("Global Shortcut Transcription error: {}", err);
-                        utils::hide_recording_overlay(&ah);
-                        change_tray_icon(&ah, TrayIconState::Idle);
+                        run_ui_update(&ah, "transcription_error", |app| {
+                            utils::hide_recording_overlay(&app);
+                            change_tray_icon(&app, TrayIconState::Idle);
+                        });
                     }
                 }
             } else {
                 debug!("No samples retrieved from recording stop");
-                utils::hide_recording_overlay(&ah);
-                change_tray_icon(&ah, TrayIconState::Idle);
+                run_ui_update(&ah, "no_samples", |app| {
+                    utils::hide_recording_overlay(&app);
+                    change_tray_icon(&app, TrayIconState::Idle);
+                });
             }
 
             // Clear toggle state now that transcription is complete

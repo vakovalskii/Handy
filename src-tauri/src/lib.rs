@@ -17,6 +17,7 @@ mod signal_handle;
 mod tray;
 mod tray_i18n;
 mod utils;
+#[cfg(debug_assertions)]
 use specta_typescript::{BigIntExportBehavior, Typescript};
 use tauri_specta::{collect_commands, Builder};
 
@@ -289,6 +290,7 @@ pub fn run() {
         shortcut::change_remote_whisper_prompt_setting,
         shortcut::change_remote_whisper_language_setting,
         shortcut::change_remote_whisper_temperature_setting,
+        shortcut::fetch_remote_whisper_models,
         shortcut::change_post_process_base_url_setting,
         shortcut::change_post_process_api_key_setting,
         shortcut::change_post_process_model_setting,
@@ -334,6 +336,9 @@ pub fn run() {
         commands::models::is_model_loading,
         commands::models::has_any_models_available,
         commands::models::has_any_models_or_downloads,
+        commands::models::get_models_directory,
+        commands::models::change_custom_models_directory,
+        commands::models::pick_models_directory,
         commands::audio::update_microphone_mode,
         commands::audio::get_microphone_mode,
         commands::audio::get_available_microphones,

@@ -92,6 +92,7 @@ windows = { version = "0.61.3", features = [
   "Win32_System_Variant",
   "Win32_Foundation",
   "Win32_UI_WindowsAndMessaging",
+  "Win32_UI_Input_KeyboardAndMouse",
 ] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
@@ -102,6 +103,7 @@ gtk-layer-shell = { version = "0.8", features = ["v0_6"] }
 gtk = "0.18"
 
 [patch.crates-io]
+whisper-rs-sys = { path = "../vendor/whisper-rs-sys-0.11.1" }
 tauri-runtime = { git = "https://github.com/cjpais/tauri.git", branch = "handy-2.9.1" }
 tauri-runtime-wry = { git = "https://github.com/cjpais/tauri.git", branch = "handy-2.9.1" }
 tauri-utils = { git = "https://github.com/cjpais/tauri.git", branch = "handy-2.9.1" }

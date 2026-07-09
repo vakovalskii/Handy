@@ -56,16 +56,16 @@ export const getKeyName = (
     };
 
     const modifierMap: Record<string, string> = {
-      ShiftLeft: getModifierName("shift"),
-      ShiftRight: getModifierName("shift"),
-      ControlLeft: getModifierName("ctrl"),
-      ControlRight: getModifierName("ctrl"),
-      AltLeft: getModifierName("alt"),
-      AltRight: getModifierName("alt"),
-      MetaLeft: getModifierName("meta"),
-      MetaRight: getModifierName("meta"),
-      OSLeft: getModifierName("meta"),
-      OSRight: getModifierName("meta"),
+      ShiftLeft: "shiftleft",
+      ShiftRight: "shiftright",
+      ControlLeft: "controlleft",
+      ControlRight: "controlright",
+      AltLeft: "altleft",
+      AltRight: "altright",
+      MetaLeft: "metaleft",
+      MetaRight: "metaright",
+      OSLeft: "metaleft",
+      OSRight: "metaright",
       CapsLock: "caps lock",
       Tab: "tab",
       Enter: "enter",
@@ -202,17 +202,6 @@ export const formatKeyCombination = (
   return combination.split("+").map(formatKeyPart).join(" + ");
 };
 
-/**
- * Normalize modifier keys to handle left/right variants
- */
 export const normalizeKey = (key: string): string => {
-  // Handle left/right variants of modifier keys
-  if (key.startsWith("left ") || key.startsWith("right ")) {
-    const parts = key.split(" ");
-    if (parts.length === 2) {
-      // Return just the modifier name without left/right prefix
-      return parts[1];
-    }
-  }
-  return key;
+  return key.toLowerCase();
 };
